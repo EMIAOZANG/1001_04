@@ -62,8 +62,8 @@ def xValSVM(dataset,label_name,k,cs):
         validation_f = dataset.iloc[test_index] 
         for c in cs:
             svmachine = svm.SVC(kernel='linear',C=c)
-            svmachine.fit(train_f.drop(label_name,1),2*train_f[label_name]-1)
-            print validation_f[label_name]
+            svmachine.fit(train_f.drop(label_name,1),train_f[label_name])
+#             print validation_f[label_name]
             metric = roc_auc_score(validation_f[label_name], svmachine.decision_function(validation_f.drop(label_name,1)))
             
             if (aucs.has_key(c)):
@@ -87,13 +87,23 @@ def execXValidation(dataset,label_name):
     cs = [10**i for i in range(-9,2)]
     aucs = xValSVM(normalized_dataset, label_name, 10, cs)  
     aucs_df = pd.DataFrame(aucs)
-#     print aucs_df
-    aucs_mean = aucs_df.mean()
-    aucs_stderr = aucs_df.std()
-    aucs_diff = aucs_mean-aucs_stderr
-    print aucs_diff
-                  
-        
+    print aucs_df
+    aucs_mean = aucs_df.mean(axis=0)
+    print aucs_mean
+    aucs_stderr = aucs_df.sem()
+    aucs_lower_bound = aucs_mean-aucs_stderr
+    aucs_upper_bound = aucs_mean+aucs_stderr
+    aucs_ref = np.max(aucs_df-aucs_stderr)
+    print aucs_ref
+    aucs_mean.plot(logx=True)
+    aucs_lower_bound.plot(logx=True,style='k+')
+    aucs_upper_bound.plot(logx=True,style='k--')
+    aucs_ref.plot(logx=True,style='r')
+    plt.show()   
+
+#def modBootsrapper(train,test,nruns,sampsize,lr=1,c=None):
+    
+    
 
 def main():
     train = cleanBosonData('boson_training_cut_2000.csv').drop('EventId',1)
