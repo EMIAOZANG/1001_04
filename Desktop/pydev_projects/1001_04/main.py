@@ -35,14 +35,22 @@ def plotAUC(truth, pred, lab):
     fpr, tpr, thresholds = roc_curve(truth, pred)
     roc_auc = auc(fpr, tpr)
     c = (np.random.rand(), np.random.rand(), np.random.rand())
-    plt.plot(fpr, tpr, color=c, label= lab+' (AUC = %0.2f)' % roc_auc)
-    plt.plot([0, 1], [0, 1], 'k--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.0])
-    plt.xlabel('FPR')
-    plt.ylabel('TPR')
-    plt.title('ROC')
-    plt.legend(loc="lower right")
+#     plt.plot(fpr, tpr, color=c, label= lab+' (AUC = %0.2f)' % roc_auc)
+#     plt.plot([0, 1], [0, 1], 'k--')
+#     plt.xlim([0.0, 1.0])
+#     plt.ylim([0.0, 1.0])
+#     plt.xlabel('FPR')
+#     plt.ylabel('TPR')
+#     plt.title('ROC')
+#     plt.legend(loc="lower right")
+    plt.plot(tpr, thresholds, color=c, label= lab+' (AUC = %0.2f)' % roc_auc)
+    plt.plot([0,1],[0,1],'k--')
+    plt.xlim([0.,1.])
+    plt.ylim([0.,1.])
+    plt.xlabel('TPR')
+    plt.ylabel('Thresholds')
+    plt.title('TPR against Thresholds')
+    plt.legend(loc='best')
     
 def fit_n_plot(arg_train,arg_test,lab):
     lr = linear_model.LogisticRegression(C=1e30)
@@ -73,9 +81,9 @@ def xValSVM(dataset,label_name,k,cs):
     return aucs
 
 def norm(dataset):
-    normalized = (dataset - dataset.mean())/(dataset.max()-dataset.min())
+    normalized = (dataset - dataset.mean())/(dataset.std())
     return normalized
-         
+             
         
 def execXValidation(dataset,label_name):
     extracted_dataset = dataset.drop(['DER_deltaeta_jet_jetmv','DER_mass_jet_jetmv','DER_prodeta_jet_jetmv','DER_mass_MMCmv'],1)
@@ -87,30 +95,108 @@ def execXValidation(dataset,label_name):
     cs = [10**i for i in range(-9,2)]
     aucs = xValSVM(normalized_dataset, label_name, 10, cs)  
     aucs_df = pd.DataFrame(aucs)
-    print aucs_df
+    print 'aucs_df:\n',aucs_df
     aucs_mean = aucs_df.mean(axis=0)
-    print aucs_mean
+    print 'aucs_mean:\n',aucs_mean
     aucs_stderr = aucs_df.sem()
+    print 'stderr(AUC):\n',np.std(aucs_df)
     aucs_lower_bound = aucs_mean-aucs_stderr
     aucs_upper_bound = aucs_mean+aucs_stderr
-    aucs_ref = np.max(aucs_df-aucs_stderr)
-    print aucs_ref
-    aucs_mean.plot(logx=True)
-    aucs_lower_bound.plot(logx=True,style='k+')
-    aucs_upper_bound.plot(logx=True,style='k--')
-    aucs_ref.plot(logx=True,style='r')
+    aucs_array = aucs_df.values
+    print 'array:\n',aucs_array
+    #aucs_ref = pd.Series(np.max(aucs_array-np.std(aucs_array)),index=cs)
+    aucs_ref = pd.Series(0.7305,index=cs)
+    print 'ref:\n',aucs_ref
+    aucs_mean.plot(logx=True,legend=True,label='Mean',title='X-Validation on different C values')
+    aucs_lower_bound.plot(logx=True,style='k+',legend=True,label='Mean-Stderr')
+    aucs_upper_bound.plot(logx=True,style='k--',legend=True,label='Mean+Stderr')
+    aucs_ref.plot(logx=True,style='r',legend=True,label='Reference Line')
     plt.show()   
+    
+def testAUCBoot(test, nruns, model, lab):
+    '''
+    Samples with replacement, runs multiple eval attempts
+    returns all bootstrapped results
+    '''
+    auc_res = []; oops = 0
+    for i in range(nruns):
+        test_samp = test.iloc[np.random.randint(0, len(test), size=len(test))]
+        try:
+            auc_res.append(roc_auc_score(test_samp[lab], model.predict_proba(test_samp.drop(lab,1))[:,1]))
+        except:
+            oops += 1
+    return auc_res
 
-#def modBootsrapper(train,test,nruns,sampsize,lr=1,c=None):
+def modBootstrapper(train,test,nruns,sampsize,lr=1,c=None):
+    auc_res = []
+    oops = 0
+    for i in range(nruns):
+        train_samp = train.iloc[np.random.randint(0,len(train),size=sampsize)]
+        if lr == 0: 
+            train_samp_svm = svm.SVC(C=c,probability=True)
+            train_samp_svm.fit(train_samp.drop('Y',1),train_samp['Y'])
+            auc_res.append(roc_auc_score(test['Y'],train_samp_svm.predict_proba(test.drop('Y',1))[:,1]))
+        elif lr == 1:
+            train_samp_lr = linear_model.LogisticRegression()
+            train_samp_lr.fit(train_samp.drop('Y',1),train_samp['Y'])
+            auc_res.append(roc_auc_score(test['Y'],train_samp_lr.predict_proba(test.drop('Y',1))[:,1]))
+    print 'auc_res:\n' , auc_res
+    return np.mean(auc_res),np.std(auc_res)
+
+def execBootstrap(train,test,nruns,sampsize):
+    #normalizing data
+    extracted_train = train.drop(['DER_deltaeta_jet_jetmv','DER_mass_jet_jetmv','DER_prodeta_jet_jetmv','DER_mass_MMCmv'],1)
+    extracted_test = test.drop(['DER_deltaeta_jet_jetmv','DER_mass_jet_jetmv','DER_prodeta_jet_jetmv','DER_mass_MMCmv'],1)
+    normalized_train = norm(extracted_train.ix[:,range(extracted_train.shape[1]-1)])
+    normalized_train['Y']=extracted_train['Y']
+    normalized_test = norm(extracted_test.ix[:,range(extracted_test.shape[1]-1)])
+    normalized_test['Y']=extracted_test['Y']
+    svm_aucs = []
+    lr_aucs = []
+    
+    for k in sampsize:
+        mean_auc_svm, std_auc_svm = modBootstrapper(normalized_train,normalized_test,nruns,k,lr=0,c=10)
+        mean_auc_lr, std_auc_lr = modBootstrapper(normalized_train, normalized_test, nruns, k, lr=1)
+        
+        print 'mean_svm:', mean_auc_svm, 'std_svm:',std_auc_svm,'\n'
+        svm_aucs.append([mean_auc_svm,std_auc_svm])
+        print 'mean_lr', mean_auc_lr, 'std_lr', std_auc_lr, '\n'
+        lr_aucs.append([mean_auc_lr,std_auc_lr])
+    
+    svm_df = pd.DataFrame(svm_aucs,index=sampsize)
+    lr_df = pd.DataFrame(lr_aucs,index=sampsize)
+    #lower bound and upper bound
+    svm_ub_df = svm_df[0]+svm_df[1]
+    svm_lb_df = svm_df[0]-svm_df[1]
+    lr_ub_df = lr_df[0]+lr_df[1]
+    lr_lb_df = lr_df[0]-lr_df[1] 
+    
+    svm_df[0].plot(logx = True,style='g',title='Bootstrap AUC Results',label='SVM Mean',legend=True)
+    lr_df[0].plot(logx = True,style='r',label='LR Mean',legend=True)
+    
+    lr_ub_df.plot(logx=True,style='r--',label='LR mean+stderr',legend=True)
+    lr_lb_df.plot(logx=True,style='r+',label='LR mean-stderr',legend=True)
+    
+    svm_ub_df.plot(logx=True,style='g--',label='SVM mean+stderr',legend=True)
+    svm_lb_df.plot(logx=True,style='g+',label='SVM mean-stderr',legend=True)
+    plt.show()
     
     
+        
+    
+        
+        
+    
+    
+        
 
 def main():
     train = cleanBosonData('boson_training_cut_2000.csv').drop('EventId',1)
-    print train
+    #print train
     test = cleanBosonData('boson_testing_cut.csv').drop('EventId',1)
-    #fit_n_plot(train,test,'Y')
-    execXValidation(train, 'Y')
+    fit_n_plot(train,test,'Y')
+    #execXValidation(train, 'Y')
+#     execBootstrap(train, test, 20, [50, 100, 200, 500, 1000, 1500, 2000, 2500, 3000])
     
 if __name__ == "__main__":
     main()
